@@ -135,11 +135,6 @@ before_script:
       cd PivApplet;
       ant dist;
       cd $TRAVIS_BUILD_DIR;
-
-      git clone https://github.com/Yubico/yubico-piv-tool.git;
-      cd yubico-piv-tool;
-      autoreconf -vis && ./configure && sudo make install;
-      cd $TRAVIS_BUILD_DIR;
     fi
 
 script:
@@ -187,9 +182,8 @@ script:
       sleep 5;
       opensc-tool --card-driver default --send-apdu 80b80000120ba000000308000010000100050000020F0F7f;
       opensc-tool -n;
-      yubico-piv-tool -r 'Virtual PCD 00 00' -P 123456 -s 9e -a generate > pubkey-9e.pem;
-      yubico-piv-tool -r 'Virtual PCD 00 00' -P 123456 -s 9e -a selfsign-certificate -S '/CN=test' < pubkey-9e.pem > cert-9e.pem;
-      yubico-piv-tool -r 'Virtual PCD 00 00' -P 123456 -s 9e -a import-certificate < cert-9e.pem;
+      piv-tool -A M:9b:03 -G 9e:06;
+      piv-tool -A M:9b:03 -C 9e;
       pkcs11-tool -l -t -p 123456;
       killall java;
       set +ex;

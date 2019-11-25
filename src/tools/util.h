@@ -16,7 +16,11 @@
 #endif
 #include <sys/stat.h>
 
+#ifdef _WIN32
+#include "common/compat_getopt.h"
+#else
 #include <getopt.h>
+#endif
 #include "libopensc/opensc.h"
 
 #ifdef __cplusplus

@@ -2016,6 +2016,11 @@ static int starcos_logout(sc_card_t *card)
 	sc_apdu_t apdu;
 	const u8 mf_buf[2] = {0x3f, 0x00};
 
+	if (card->type == SC_CARD_TYPE_STARCOS_V3_4 || card->type == SC_CARD_TYPE_STARCOS_V3_5) {
+		sc_log(card->ctx, "Enforcing card reset for StarCOS 3.x on logout\n");
+		return SC_ERROR_NOT_SUPPORTED;
+	}
+
 	sc_format_apdu(card, &apdu, SC_APDU_CASE_3_SHORT, 0xA4, 0x00, 0x0C);
 	apdu.le = 0;
 	apdu.lc = 2;

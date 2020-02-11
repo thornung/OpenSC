@@ -78,6 +78,25 @@
 #define PCSC_TRACE(reader, desc, rv) do { sc_log(reader->ctx, "%s:" desc ": 0x%08lx\n", reader->name, (unsigned long)((ULONG)rv)); } while (0)
 #define PCSC_LOG(ctx, desc, rv) do { sc_log(ctx, desc ": 0x%08lx\n", (unsigned long)((ULONG)rv)); } while (0)
 
+/* #define APDU_LOG_FILE "apdulog" */
+#ifdef APDU_LOG_FILE
+void APDU_LOG(u8 *rbuf, uint16_t rsize)
+{
+	static FILE *fd = NULL;
+	u8 *lenb = (u8*)&rsize;
+
+	if (fd == NULL) {
+		fd = fopen(APDU_LOG_FILE, "w");
+	}
+	/* First two bytes denote the length */
+	(void) fwrite(lenb, 2, 1, fd);
+	(void) fwrite(rbuf, rsize, 1, fd);
+	fflush(fd);
+}
+#else
+#define APDU_LOG(rbuf, rsize)
+#endif
+
 struct pcsc_global_private_data {
 	int cardmod;
 	SCARDCONTEXT pcsc_ctx;
@@ -305,6 +324,7 @@ static int pcsc_transmit(sc_reader_t *reader, sc_apdu_t *apdu)
 		goto out;
 	}
 	sc_apdu_log(reader->ctx, rbuf, rsize, 0);
+	APDU_LOG(rbuf, (uint16_t)rsize);
 	/* set response */
 	r = sc_apdu_set_resp(reader->ctx, apdu, rbuf, rsize);
 
@@ -350,6 +370,11 @@ static int refresh_attributes(sc_reader_t *reader)
 			/* Timeout, no change from previous recorded state. Make sure that
 			 * changed flag is not set. */
 			reader->flags &= ~SC_READER_CARD_CHANGED;
+			/* Make sure to preserve the CARD_PRESENT flag if the reader was
+			 * reattached and we called the refresh_attributes too recently */
+			if (priv->reader_state.dwEventState & SCARD_STATE_PRESENT) {
+				reader->flags |= SC_READER_CARD_PRESENT;
+			}
 			LOG_FUNC_RETURN(reader->ctx, SC_SUCCESS);
 		}
 		
@@ -397,6 +422,7 @@ static int refresh_attributes(sc_reader_t *reader)
 		if (memcmp(priv->reader_state.rgbAtr, reader->atr.value, priv->reader_state.cbAtr) != 0) {
 			reader->atr.len = priv->reader_state.cbAtr;
 			memcpy(reader->atr.value, priv->reader_state.rgbAtr, reader->atr.len);
+			APDU_LOG(reader->atr.value, (uint16_t) reader->atr.len);
 		}
 
 		/* Is the reader in use by some other application ? */
@@ -2385,11 +2411,27 @@ int pcsc_use_reader(sc_context_t *ctx, void * pcsc_context_handle, void * pcsc_c
 		goto out;
 	}
 
-	/* if we already had a reader, delete it */
+	if (!gpriv->cardmod) {
+		ret = SC_ERROR_INTERNAL;
+		goto out;
+	}
+
+	/* Only minidriver calls this and only uses one reader */
+	/* if we already have a reader, update it */
 	if (sc_ctx_get_reader_count(ctx) > 0) {
-		sc_reader_t *oldrdr = list_extract_at(&ctx->readers, 0);
-		if (oldrdr)
-			_sc_delete_reader(ctx, oldrdr);
+		sc_log(ctx, "Reusing the reader");
+		sc_reader_t *reader = list_get_at(&ctx->readers, 0);
+
+		if (reader) {
+			struct pcsc_private_data *priv = reader->drv_data;
+			priv->pcsc_card =*(SCARDHANDLE *)pcsc_card_handle;
+			gpriv->pcsc_ctx = *(SCARDCONTEXT *)pcsc_context_handle;
+			ret = SC_SUCCESS;
+			goto out;
+		} else {
+			ret = SC_ERROR_INTERNAL;
+			goto out;
+		}
 	}
 
 	sc_log(ctx, "Probing PC/SC reader");

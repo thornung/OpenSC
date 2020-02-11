@@ -54,6 +54,7 @@
 #endif
 #include "iso7816.h"
 #include "card-cac-common.h"
+#include "pkcs15.h"
 
 /*
  *  CAC hardware and APDU constants
@@ -78,7 +79,7 @@ static int cac_cac1_get_certificate(sc_card_t *card, u8 **out_buf, size_t *out_l
 	out_ptr = *out_buf ? *out_buf : buf;
 	sc_format_apdu(card, &apdu, SC_APDU_CASE_2_SHORT, CAC_INS_GET_CERTIFICATE, 0, 0 );
 	len = MIN(left, 100);
-	for (; left > 0;) { /* Increments for readability in the end of the function */
+	while (left > 0) {
 		apdu.resp = out_ptr;
 		apdu.le = len;
 		apdu.resplen = left;

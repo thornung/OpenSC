@@ -76,7 +76,7 @@ static const struct option options[] = {
 };
 static const char *option_help[] = {
 	"Uses reader number <arg> [0]",
-	"Forces the use of driver <arg> [auto-detect]",
+	"Forces the use of driver <arg> [auto-detect; '?' for list]",
 	"Selects path <arg> on start-up, or none if empty [3F00]",
 	"Wait for card insertion",
 	"Verbose operation. Use several times to enable debug output.",
@@ -653,6 +653,8 @@ static int do_find_tags(int argc, char **argv)
 		r = sc_lock(card);
 		if (r == SC_SUCCESS)
 			r = sc_get_data(card, tag, rbuf, sizeof rbuf);
+		else
+			r = SC_ERROR_READER_LOCKED;
 		sc_unlock(card);
 		if (r >= 0) {
 			printf(" %04X ", tag);
@@ -792,6 +794,8 @@ static int read_and_print_record_file(sc_file_t *file, unsigned char sfi)
 		if (r == SC_SUCCESS)
 			r = sc_read_record(card, rec, buf, sizeof(buf),
 					SC_RECORD_BY_REC_NR | sfi);
+		else
+			r = SC_ERROR_READER_LOCKED;
 		sc_unlock(card);
 		if (r == SC_ERROR_RECORD_NOT_FOUND)
 			return 0;
@@ -1413,8 +1417,8 @@ static int do_get(int argc, char **argv)
 		check_ret(r, SC_AC_OP_SELECT, "unable to select file", current_file);
 		goto err;
 	}
-	if (file->type != SC_FILE_TYPE_WORKING_EF) {
-		fprintf(stderr, "only working EFs may be read\n");
+	if (file->type != SC_FILE_TYPE_WORKING_EF || file->ef_structure != SC_FILE_EF_TRANSPARENT) {
+		fprintf(stderr, "only transparent working EFs may be read\n");
 		goto err;
 	}
 	count = file->size;
@@ -2152,6 +2156,12 @@ int main(int argc, char *argv[])
         }
 
 	if (opt_driver != NULL) {
+		/* special card driver value "?" means: list available drivers */
+		if (strncmp("?", opt_driver, sizeof("?")) == 0) {
+			err = util_list_card_drivers(ctx);
+			goto end;
+		}
+
 		err = sc_set_card_driver(ctx, opt_driver);
 		if (err) {
 			fprintf(stderr, "Driver '%s' not found!\n", opt_driver);

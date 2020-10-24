@@ -303,7 +303,7 @@ static int nqapplet_decipher(struct sc_card *card, const u8 * data, size_t cb_da
 	LOG_FUNC_CALLED(card->ctx);
 
 	/* the applet supports only 3072 RAW RSA input must be 384 bytes out at least 384 octets */
-
+	sc_log(card->ctx,  "About to DECIPHER %d octets", cb_data);
 	sc_format_apdu_ex(&apdu, 0x80, 0x2A, 0x80, 0x86, data, cb_data, out, outlen);
 	apdu.le = 256;
 	apdu.flags |= SC_APDU_FLAGS_CHAINING;
@@ -318,7 +318,7 @@ static int nqapplet_decipher(struct sc_card *card, const u8 * data, size_t cb_da
 	{
 		rv = apdu.sw2 == 0 ? 256 : apdu.sw2;
 	}
-	else if (apdu.sw1 == 0x62 && apdu.sw2 == 0x82)
+	else
 	{
 		rv = sc_check_sw(card, apdu.sw1, apdu.sw2);
 	}
@@ -336,7 +336,7 @@ static int nqapplet_compute_signature(struct sc_card *card, const u8 * data, siz
 
 	/* the applet supports only 3072 RAW RSA input must be 384 bytes out at least 384 octets */
 
-	sc_format_apdu_ex(&apdu, 0x80, 0x2A, 0x80, 0x86, data, cb_data, out, outlen);
+	sc_format_apdu_ex(&apdu, 0x80, 0x2A, 0x9E, 0x9A, data, cb_data, out, outlen);
 	apdu.le = 256;
 	apdu.flags |= SC_APDU_FLAGS_CHAINING;
 	rv = sc_transmit_apdu(card, &apdu);
@@ -350,7 +350,7 @@ static int nqapplet_compute_signature(struct sc_card *card, const u8 * data, siz
 	{
 		rv = apdu.sw2 == 0 ? 256 : apdu.sw2;
 	}
-	else if (apdu.sw1 == 0x62 && apdu.sw2 == 0x82)
+	else
 	{
 		rv = sc_check_sw(card, apdu.sw1, apdu.sw2);
 	}

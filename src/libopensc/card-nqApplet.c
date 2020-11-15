@@ -42,10 +42,15 @@ static const u8 nqapplet_aid[] = {0xd2, 0x76, 0x00, 0x01, 0x80, 0xBA, 0x01, 0x44
 static struct sc_card_operations nqapplet_operations;
 static struct sc_card_operations *iso_operations = NULL;
 
+#define KEY_REFERENCE_NO_KEY	0x00
+#define KEY_REFERENCE_AUTH_KEY	0x01
+#define KEY_REFERENCE_ENCR_KEY	0x02
+
 struct nqapplet_driver_data
 {
 	u8 version_minor;
 	u8 version_major;
+	u8 key_reference;
 	u8 serial_nr[APPLET_SERIALNR_LEN];
 };
 typedef struct nqapplet_driver_data * nqapplet_driver_data_ptr;
@@ -84,6 +89,10 @@ static int init_driver_data(sc_card_t *card, u8 version_major, u8 version_minor,
 		LOG_FUNC_RETURN(card->ctx, SC_ERROR_OUT_OF_MEMORY);
 	}
 
+	data->version_major = version_major;
+	data->version_minor = version_minor;
+	data->key_reference = KEY_REFERENCE_NO_KEY;
+	memcpy(data->serial_nr, serial_nr, min(cb_serial_nr, sizeof(data->serial_nr)));
 	card->drv_data = (void*)data;
 	return SC_SUCCESS;
 }
@@ -273,19 +282,37 @@ static int nqapplet_logout(struct sc_card *card)
 int nqapplet_set_security_env(struct sc_card *card, const struct sc_security_env *env, int se_num)
 {
 	/* Note: the NQ-Applet does not have APDU for SET SECURITY ENV, this function only checks the intended parameters */
+	nqapplet_driver_data_ptr data;
+	
 	assert(card != NULL && env != NULL);
 	LOG_FUNC_CALLED(card->ctx);
+
+	data = (nqapplet_driver_data_ptr)card->drv_data;
+	data->key_reference = KEY_REFERENCE_NO_KEY;
+	u8 key_reference = KEY_REFERENCE_NO_KEY;
 
 	if(se_num != 0)
 	{
 		LOG_TEST_RET(card->ctx, SC_ERROR_NOT_SUPPORTED, "Storing of security environment is not supported");
 	}
-
+	if ( env->key_ref_len == 1 )
+	{
+		key_reference = env->key_ref[0];
+	}
+	
 	switch (env->operation)
 	{
 		case SC_SEC_OPERATION_DECIPHER:
+			if ( key_reference != KEY_REFERENCE_AUTH_KEY && key_reference != KEY_REFERENCE_ENCR_KEY ) {
+				LOG_TEST_RET(card->ctx, SC_ERROR_INCOMPATIBLE_KEY, "Decipher operation is only supported with AUTH and ENCR keys.");
+			}
+			data->key_reference = key_reference;
 			break;
 		case SC_SEC_OPERATION_SIGN:
+			if ( key_reference != KEY_REFERENCE_AUTH_KEY ) {
+				LOG_TEST_RET(card->ctx, SC_ERROR_INCOMPATIBLE_KEY, "Sign operation is only supported with AUTH key.");
+			}
+			data->key_reference = key_reference;
 			break;
 		default:
 			LOG_TEST_RET(card->ctx, SC_ERROR_NOT_SUPPORTED, "Unsupported sec. operation.");
@@ -298,13 +325,27 @@ static int nqapplet_decipher(struct sc_card *card, const u8 * data, size_t cb_da
 {
 	int rv;
 	struct sc_apdu apdu;
+	u8 p1 = 0x80;
+	u8 p2 = 0x86;
+	nqapplet_driver_data_ptr drv_data;
 
 	assert(card != NULL && data != NULL && out != NULL);
 	LOG_FUNC_CALLED(card->ctx);
 
+	drv_data = (nqapplet_driver_data_ptr)card->drv_data;
+	
+	if ( drv_data->key_reference == KEY_REFERENCE_AUTH_KEY )
+	{
+		p1 = 0x9E;
+		p2 = 0x9A;
+	} 
+	else if ( drv_data->key_reference != KEY_REFERENCE_ENCR_KEY )
+	{
+		LOG_TEST_RET(card->ctx, SC_ERROR_INCOMPATIBLE_KEY, "Decipher operation is only supported with AUTH and ENCR keys.");
+	}
+
 	/* the applet supports only 3072 RAW RSA input must be 384 bytes out at least 384 octets */
-	sc_log(card->ctx,  "About to DECIPHER %d octets", cb_data);
-	sc_format_apdu_ex(&apdu, 0x80, 0x2A, 0x80, 0x86, data, cb_data, out, outlen);
+	sc_format_apdu_ex(&apdu, 0x80, 0x2A, p1, p2, data, cb_data, out, outlen);
 	apdu.le = 256;
 	apdu.flags |= SC_APDU_FLAGS_CHAINING;
 	rv = sc_transmit_apdu(card, &apdu);
@@ -330,12 +371,18 @@ static int nqapplet_compute_signature(struct sc_card *card, const u8 * data, siz
 {
 	int rv;
 	struct sc_apdu apdu;
+	nqapplet_driver_data_ptr drv_data;
 
 	assert(card != NULL && data != NULL && out != NULL);
 	LOG_FUNC_CALLED(card->ctx);
+	drv_data = (nqapplet_driver_data_ptr)card->drv_data;
+	
+	if ( drv_data->key_reference != KEY_REFERENCE_AUTH_KEY )
+	{
+		LOG_TEST_RET(card->ctx, SC_ERROR_INCOMPATIBLE_KEY, "Sign operation is only supported with AUTH key.");
+	}
 
 	/* the applet supports only 3072 RAW RSA input must be 384 bytes out at least 384 octets */
-
 	sc_format_apdu_ex(&apdu, 0x80, 0x2A, 0x9E, 0x9A, data, cb_data, out, outlen);
 	apdu.le = 256;
 	apdu.flags |= SC_APDU_FLAGS_CHAINING;

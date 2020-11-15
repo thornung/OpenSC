@@ -118,7 +118,7 @@ static int add_nqapplet_certificate(sc_pkcs15_card_t *p15card, const char * id, 
     LOG_FUNC_RETURN(card->ctx, SC_SUCCESS);
 }
 
-static int add_nqapplet_private_key(sc_pkcs15_card_t *p15card, const char * id, const char * name, const char * pin_id, unsigned int usage)
+static int add_nqapplet_private_key(sc_pkcs15_card_t *p15card, const char * id, int reference, const char * name, const char * pin_id, unsigned int usage)
 {
     int rv;
     struct sc_pkcs15_prkey_info prkey_info;
@@ -133,7 +133,7 @@ static int add_nqapplet_private_key(sc_pkcs15_card_t *p15card, const char * id, 
     sc_pkcs15_format_id(id, &prkey_info.id);
     prkey_info.usage = usage;
     prkey_info.native = 1;
-    prkey_info.key_reference = 0;
+    prkey_info.key_reference = reference;
     prkey_info.modulus_length = 3072;
 
     strlcpy(prkey_obj.label, name, sizeof(prkey_obj.label));
@@ -162,7 +162,7 @@ static int add_nqapplet_objects(sc_pkcs15_card_t *p15card)
     LOG_TEST_RET(card->ctx, rv, "Failed to add Auth. certificate");
 
     // 2.2) PrK.CH.Auth
-    rv = add_nqapplet_private_key(p15card, "1", "PrK.CH.Auth", "1", SC_PKCS15_PRKEY_USAGE_SIGN | SC_PKCS15_PRKEY_USAGE_ENCRYPT | SC_PKCS15_PRKEY_USAGE_DECRYPT);
+    rv = add_nqapplet_private_key(p15card, "1", 0x01, "PrK.CH.Auth", "1", SC_PKCS15_PRKEY_USAGE_SIGN | SC_PKCS15_PRKEY_USAGE_ENCRYPT | SC_PKCS15_PRKEY_USAGE_DECRYPT);
     LOG_TEST_RET(card->ctx, rv, "Failed to add Auth. private key");
 
     // 2.1) CH.Auth 
@@ -170,7 +170,7 @@ static int add_nqapplet_objects(sc_pkcs15_card_t *p15card)
     LOG_TEST_RET(card->ctx, rv, "Failed to add Encr. certificate");
 
     // 2.2) PrK.CH.Auth
-    rv = add_nqapplet_private_key(p15card, "2", "PrK.CH.Encr", "1", SC_PKCS15_PRKEY_USAGE_DECRYPT);
+    rv = add_nqapplet_private_key(p15card, "2", 0x02, "PrK.CH.Encr", "1", SC_PKCS15_PRKEY_USAGE_DECRYPT);
     LOG_TEST_RET(card->ctx, rv, "Failed to add Encr. private key");
 
     LOG_FUNC_RETURN(card->ctx, SC_SUCCESS);

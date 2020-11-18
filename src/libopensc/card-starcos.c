@@ -377,6 +377,7 @@ static int starcos_init(sc_card_t *card)
 	if (card->type == SC_CARD_TYPE_STARCOS_V3_4
 			|| card->type == SC_CARD_TYPE_STARCOS_V3_5) {
 		card->caps |= SC_CARD_CAP_ISO7816_PIN_INFO;
+		card->caps |= SC_CARD_CAP_APDU_EXT;
 
 		flags |= SC_CARD_FLAG_RNG
 			| SC_ALGORITHM_RSA_HASH_SHA224
@@ -396,6 +397,8 @@ static int starcos_init(sc_card_t *card)
 			card->name = "STARCOS 3.5";
 			_sc_card_add_rsa_alg(card,3072, flags, 0x10001);
 		}
+		card->max_send_size = 255;
+		card->max_recv_size = 256;
 	} else {
 		_sc_card_add_rsa_alg(card, 512, flags, 0x10001);
 		_sc_card_add_rsa_alg(card, 768, flags, 0x10001);
@@ -406,6 +409,7 @@ static int starcos_init(sc_card_t *card)
 		card->max_recv_size = 128;
 	}
 
+#ifdef ENABLE_PARSE_EF_ATR_FIX
 	if (sc_parse_ef_atr(card) == SC_SUCCESS) {
 		if (card->ef_atr->card_capabilities & ISO7816_CAP_EXTENDED_LENGTH) {
 			card->caps |= SC_CARD_CAP_APDU_EXT;
@@ -424,6 +428,7 @@ static int starcos_init(sc_card_t *card)
 			}
 		}
 	}
+#endif
 
 	if ( ex_data->pin_encoding == PIN_ENCODING_DETERMINE ) {
 		// about to determine PIN encoding

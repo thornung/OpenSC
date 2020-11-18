@@ -110,7 +110,7 @@ static int get_cert_size(sc_card_t * card, sc_path_t * path, size_t * psize) {
 static int add_app(sc_pkcs15_card_t *p15card, const container * containers, int container_count) {
 	int i, r, containers_added = 0;
 	ppindata installed_pins[2];
-	int installed_pin_count = 0;
+	size_t installed_pin_count = 0;
 	sc_card_t * card = p15card->card;
 
 	LOG_FUNC_CALLED(card->ctx);

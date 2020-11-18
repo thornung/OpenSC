@@ -96,7 +96,7 @@ typedef struct container_st {
 
 static int get_cert_size(sc_card_t * card, sc_path_t * path, size_t * psize) {
 	int r;
-	sc_file_t * file;
+	sc_file_t * file = NULL;
 
 	r = sc_select_file(card, path, &file);
 	LOG_TEST_RET(card->ctx, r, "Failed to select EF certificate");
@@ -144,7 +144,7 @@ static int add_app(sc_pkcs15_card_t *p15card, const container * containers, int 
 		}
 
 		if (containers[i].pindata != 0) {
-			int j;
+			size_t j;
 			int is_pin_installed = 0;
 			for (j = 0; j < installed_pin_count; j++) {
 				if (installed_pins[j] == containers[i].pindata) {
@@ -274,22 +274,22 @@ static int starcos_esign_qes_init(sc_pkcs15_card_t *p15card, struct sc_aid *aid)
 	sc_context_t * ctx;
 	sc_card_t * card;
 	const char * label = name_Card;
-    int r, apps_added;
+	int r;
+	int apps_added = 0;
 
-    if (!p15card || ! p15card->card || !p15card->card->ctx ) return SC_ERROR_INVALID_ARGUMENTS;
+	if (!p15card || ! p15card->card || !p15card->card->ctx ) return SC_ERROR_INVALID_ARGUMENTS;
 
 	// convenience variables
 	card = p15card->card;
 	ctx = card->ctx;
 	
-    SC_FUNC_CALLED(ctx, SC_LOG_DEBUG_NORMAL);
+	SC_FUNC_CALLED(ctx, SC_LOG_DEBUG_NORMAL);
 
 	if (card->type!=SC_CARD_TYPE_STARCOS_V3_4 && card->type!=SC_CARD_TYPE_STARCOS_V3_5) {
-        sc_log(p15card->card->ctx, "Unsupported card type: %d", card->type);
-        return SC_ERROR_WRONG_CARD;
-    }
+		sc_log(p15card->card->ctx, "Unsupported card type: %d", card->type);
+		return SC_ERROR_WRONG_CARD;
+	}
 
-	apps_added = 0;
 	if ( aid == NULL ) {
 		// no aid: in this case all emulated apps are added
 		r = starcos_add_esign_app(p15card);
@@ -331,17 +331,17 @@ static int starcos_esign_qes_init(sc_pkcs15_card_t *p15card, struct sc_aid *aid)
 		LOG_TEST_RET(ctx, SC_ERROR_WRONG_CARD, "Neither ESign nor QES initialized");
 	}
 
-    if (p15card->tokeninfo) {
+	if (p15card->tokeninfo) {
 		sc_pkcs15_free_tokeninfo(p15card->tokeninfo);
 	}
 
-    p15card->tokeninfo = sc_pkcs15_tokeninfo_new();
-    if (!p15card->tokeninfo) {
+	p15card->tokeninfo = sc_pkcs15_tokeninfo_new();
+	if (!p15card->tokeninfo) {
 		LOG_TEST_RET(ctx, SC_ERROR_OUT_OF_MEMORY, "unable to create tokeninfo struct");
 	} else {
-        sc_serial_number_t serial;
+		sc_serial_number_t serial;
 		char serial_hex[SC_MAX_SERIALNR*2+2];
-	    r = sc_card_ctl(card, SC_CARDCTL_GET_SERIALNR, &serial);
+		r = sc_card_ctl(card, SC_CARDCTL_GET_SERIALNR, &serial);
 		LOG_TEST_RET(ctx, r, "Failed to query card serial number");
 
 		sc_bin_to_hex(serial.value, serial.len , serial_hex, sizeof serial_hex, 0);
@@ -351,16 +351,16 @@ static int starcos_esign_qes_init(sc_pkcs15_card_t *p15card, struct sc_aid *aid)
 		p15card->tokeninfo->flags = SC_PKCS15_TOKEN_READONLY;
 	}
 
-    return SC_SUCCESS;
+	return SC_SUCCESS;
 }
 
 int sc_pkcs15emu_starcos_esign_qes_init_ex(sc_pkcs15_card_t *p15card, struct sc_aid *aid) {
 	int r = SC_ERROR_WRONG_CARD;
 
-    if (!p15card || ! p15card->card || !p15card->card->ctx) return SC_ERROR_INVALID_ARGUMENTS;
+	if (!p15card || ! p15card->card || !p15card->card->ctx) return SC_ERROR_INVALID_ARGUMENTS;
 
-    r = starcos_esign_qes_init(p15card, aid);
-    sc_log(p15card->card->ctx, "PKCS15Emu for StarCOS Esign/QES init returned: %d", r);
+	r = starcos_esign_qes_init(p15card, aid);
+	sc_log(p15card->card->ctx, "PKCS15Emu for StarCOS Esign/QES init returned: %d", r);
 
 	return r;
 }

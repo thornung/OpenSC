@@ -32,7 +32,7 @@
 
 #define RANDOM_UID_INDICATOR 0x08
 
-static const char name_Card[] = "ESIGN.QES";
+static const char name_Card[] = "ESIGN";
 static const char name_Vendor[] = "Giesecke & Devrient";
 static const char name_ESign[] = "ESIGN";
 static const unsigned char aid_ESIGN[] = {0xA0, 0x00, 0x00, 0x02, 0x45, 0x53, 0x69, 0x67, 0x6E};

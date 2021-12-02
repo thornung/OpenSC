@@ -1352,6 +1352,35 @@ md_fs_set_content(PCARD_DATA pCardData, struct md_file *file, unsigned char *blo
 	return SCARD_S_SUCCESS;
 }
 
+static DWORD
+md_build_reader_specific_cardid(PCARD_DATA pCardData,  __out_ecount(dwGuidSize) PSTR szGuid, DWORD dwGuidSize);
+static BOOL md_get_app_config_bool(PCARD_DATA pCardData, char *flag_name, BOOL ret_default)
+{
+	VENDOR_SPECIFIC *vs;
+	BOOL ret = ret_default;
+
+	if (!pCardData)
+		return ret;
+
+	vs = (VENDOR_SPECIFIC*) pCardData->pvVendorSpecific;
+	if (!vs)
+		return ret;
+
+	if (vs->ctx) {
+		int i;
+		for (i = 0; vs->ctx->conf_blocks[i]; i++) {
+			const char* config_entry = scconf_get_str(vs->ctx->conf_blocks[i], flag_name, NULL);
+			if (config_entry != NULL) {
+				ret = scconf_get_bool(vs->ctx->conf_blocks[i], flag_name, ret);
+				break;
+			}
+		}
+	}
+
+	logprintf(pCardData, 2, "flag_name:%s:%s\n", flag_name, ret ? "TRUE": "FALSE");
+	return ret;
+}
+
 /*
  * Set 'cardid' from the 'serialNumber' attribute of the 'tokenInfo'
  */
@@ -1360,6 +1389,8 @@ md_set_cardid(PCARD_DATA pCardData, struct md_file *file)
 {
 	VENDOR_SPECIFIC *vs;
 	DWORD dwret;
+	unsigned char cardid_bin[MD_CARDID_SIZE];
+	int rv;
 
 	if (!pCardData || !file)
 		return SCARD_E_INVALID_PARAMETER;
@@ -1368,11 +1399,23 @@ md_set_cardid(PCARD_DATA pCardData, struct md_file *file)
 	if (!vs)
 		return SCARD_E_INVALID_PARAMETER;
 
-	if (vs->p15card->tokeninfo && vs->p15card->tokeninfo->serial_number) {
+	if ( md_get_app_config_bool(pCardData, "enable_cardid_fix", FALSE) ) {
+		DWORD rc = md_build_reader_specific_cardid(pCardData, cardid_bin, sizeof(cardid_bin));
+		
+		if (BCRYPT_SUCCESS(rc)) {
+			rv = md_fs_set_content(pCardData, file, cardid_bin, MD_CARDID_SIZE);
+		} else {
+			// enable old method as fallback 
+			rv = SCARD_E_INVALID_VALUE;
+		}
+	} else {
+		// use old method
+		rv = SCARD_E_INVALID_VALUE;
+	}
+
+	if (rv != SCARD_S_SUCCESS && vs->p15card->tokeninfo && vs->p15card->tokeninfo->serial_number) {
 		unsigned char sn_bin[SC_MAX_SERIALNR];
-		unsigned char cardid_bin[MD_CARDID_SIZE];
 		size_t offs, wr, sn_len = sizeof(sn_bin);
-		int rv;
 
 		rv = sc_hex_to_bin(vs->p15card->tokeninfo->serial_number, sn_bin, &sn_len);
 		if (rv) {
@@ -4823,7 +4866,7 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __inout PCARD_SIGNING_INFO 
 				opt_crypt_flags = SC_ALGORITHM_RSA_PAD_PSS;
 				BCRYPT_PSS_PADDING_INFO *pss_pinf = (BCRYPT_PSS_PADDING_INFO *)pInfo->pPaddingInfo;
 				ULONG expected_salt_len;
-
+				logprintf(pCardData, 4, "PSS Padding Info: %S, salt length: %d\n", NULLWSTR(pss_pinf->pszAlgId), pss_pinf->cbSalt);
 				if (!pss_pinf->pszAlgId || wcscmp(pss_pinf->pszAlgId, BCRYPT_SHA1_ALGORITHM) == 0) {
 					/* hashAlg = CALG_SHA1; */
 					logprintf(pCardData, 3, "Using CALG_SHA1  hashAlg\n");
@@ -5304,6 +5347,88 @@ cleanup:
 	if (pbBuffer)
 		LocalFree(pbBuffer);
 	return dwReturn;
+}
+
+/*
+ * Create a device specific 'cardid' from the 'serialNumber' attribute of the 'tokenInfo'
+ * and from the name of the card terminal. The new ID calculated with an MD5 hash.
+ * 
+ * returns BCRYPT NTSTATUS, check with BCRYPT_SUCCESS(rc)
+ */
+static DWORD
+md_build_reader_specific_cardid(PCARD_DATA pCardData,  __out_ecount(dwGuidSize) PSTR szGuid, DWORD dwGuidSize)
+{
+	DWORD rc;
+	int rv;
+	unsigned char sn_bin[SC_MAX_SERIALNR];
+	size_t sn_len = sizeof(sn_bin);
+	size_t rn_len;
+ 	BCRYPT_ALG_HANDLE hAlgorithm = NULL;
+	DWORD dwSize, dwHashSize;
+	VENDOR_SPECIFIC *vs = pCardData->pvVendorSpecific;
+	
+	logprintf(pCardData, 4, "Calculating reader specific card_id");
+
+	if (!vs) {
+		logprintf(pCardData, 4, "Missing VENDOR_SPECIFIC data");
+		BCryptCloseAlgorithmProvider(hAlgorithm, 0);
+		MD_FUNC_RETURN(pCardData, 4, STATUS_INVALID_PARAMETER);
+	}
+
+	if (!vs->p15card->tokeninfo || !vs->p15card->tokeninfo->serial_number 
+		|| !vs->card->reader  || !vs->card->reader->name) {
+		logprintf(pCardData, 4, "Missing mandatory information to calculate reader specific card_id");
+		BCryptCloseAlgorithmProvider(hAlgorithm, 0);
+		MD_FUNC_RETURN(pCardData, 4, STATUS_INVALID_PARAMETER);
+	}
+
+	rc = BCryptOpenAlgorithmProvider(&hAlgorithm, BCRYPT_MD5_ALGORITHM, NULL, 0);
+	if (!BCRYPT_SUCCESS(rc)) {
+		logprintf(pCardData, 4,
+			  "unable to find a provider for the algorithm %S 0x%08X\n",
+			  BCRYPT_MD5_ALGORITHM, (unsigned int)rc);
+		MD_FUNC_RETURN(pCardData, 4, rc);
+	}
+
+	dwSize = sizeof(DWORD);
+	rc = BCryptGetProperty(hAlgorithm, BCRYPT_HASH_LENGTH, (PUCHAR)&dwHashSize, dwSize, &dwSize, 0);
+	if (!BCRYPT_SUCCESS(rc)) {
+		logprintf(pCardData, 4, "unable to get the hash length\n");
+		BCryptCloseAlgorithmProvider(hAlgorithm, 0);
+		MD_FUNC_RETURN(pCardData, 4, rc);
+	}
+
+	if ( dwHashSize != dwGuidSize ) {
+		logprintf(pCardData, 4, "Unexpected hash buffer size. expected %d, got %d", dwHashSize, dwGuidSize);
+		BCryptCloseAlgorithmProvider(hAlgorithm, 0);
+		MD_FUNC_RETURN(pCardData, 4, STATUS_INVALID_PARAMETER);
+	}
+
+	rv = sc_hex_to_bin(vs->p15card->tokeninfo->serial_number, sn_bin, &sn_len);
+	if (rv) {
+		// fallback, if cannot convert hex to bin...
+		logprintf(pCardData, 4, "hex_to_bin failed, using fallback");
+		sn_len = strlen(vs->p15card->tokeninfo->serial_number);
+		if (sn_len > SC_MAX_SERIALNR) {
+			sn_len = SC_MAX_SERIALNR;
+		}
+		memcpy(sn_bin, vs->p15card->tokeninfo->serial_number, sn_len);
+	}
+	rn_len = strlen(vs->card->reader->name);
+	rc = HashDataWithBCrypt(pCardData, hAlgorithm, 
+			szGuid, dwGuidSize,
+			NULL, 0, 
+			sn_bin, sn_len, 
+			vs->card->reader->name, rn_len, 
+			NULL, 0);
+	if (!BCRYPT_SUCCESS(rc)) {
+		logprintf(pCardData, 4, "HashDataWithBCrypt failed: 0x%lX", rc);
+	} else {
+		logprintf(pCardData, 4, "Reader specific card_id calculated:");
+		loghex(pCardData, 4, szGuid, dwGuidSize);
+	}
+	BCryptCloseAlgorithmProvider(hAlgorithm, 0);
+	MD_FUNC_RETURN(pCardData, 4, rc);
 }
 
 /* Generic function for TLS PRF. Compute the P_HASH function */

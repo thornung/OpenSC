@@ -40,7 +40,7 @@ SM_DEF = /DENABLE_SM
 # - uncomment the line starting with OPENSSL_DEF
 # - set the OPENSSL_INCL_DIR below to your openssl include directory, preceded by "/I"
 # - set the OPENSSL_LIB below to your openssl lib file
-#OPENSSL_DEF= /DENABLE_OPENSSL
+OPENSSL_DEF= /DENABLE_OPENSSL
 !IF "$(OPENSSL_DEF)" == "/DENABLE_OPENSSL"
 !IF "$(OPENSSL_DIR)" == ""
 !IF "$(PLATFORM)" == "x86"

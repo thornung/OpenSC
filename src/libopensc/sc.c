@@ -82,8 +82,13 @@ int sc_hex_to_bin(const char *in, u8 *out, size_t *outlen)
 		else if ('A' <= c && c <= 'F')
 			nibble = c - 'A' + 10;
 		else {
-			if (strchr(sc_hex_to_bin_separators, (int) c))
+			if (strchr(sc_hex_to_bin_separators, (int) c)) {
+				if (byte_needs_nibble) {
+					r = SC_ERROR_INVALID_ARGUMENTS;
+					goto err;
+				}
 				continue;
+			}
 			r = SC_ERROR_INVALID_ARGUMENTS;
 			goto err;
 		}
@@ -337,6 +342,12 @@ int sc_detect_card_presence(sc_reader_t *reader)
 		LOG_FUNC_RETURN(reader->ctx, SC_ERROR_NOT_SUPPORTED);
 
 	r = reader->ops->detect_card_presence(reader);
+
+	// Check that we get sane return value from backend
+	// detect_card_presence should return 0 if no card is present.
+	if (r && !(r & SC_READER_CARD_PRESENT))
+		LOG_FUNC_RETURN(reader->ctx, SC_ERROR_INTERNAL);
+
 	LOG_FUNC_RETURN(reader->ctx, r);
 }
 

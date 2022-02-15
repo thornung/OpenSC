@@ -3,7 +3,12 @@
 set -ex -o xtrace
 
 # Generic dependencies
-DEPS="docbook-xsl xsltproc gengetopt help2man pcscd check pcsc-tools libtool make autoconf autoconf-archive automake pkg-config openssl git"
+DEPS="docbook-xsl xsltproc gengetopt help2man pcscd check pcsc-tools libtool make autoconf autoconf-archive automake pkg-config git"
+
+# Add openssl or install openssl3.0
+if [ "$1" != "ossl3" -a "$2" != "ossl3" -a  ]; then
+	DEPS="$DEPS openssl"
+fi
 
 # 64bit or 32bit dependencies
 if [ "$1" == "ix86" ]; then
@@ -25,10 +30,6 @@ elif [ "$1" == "piv" -o "$1" == "isoapplet" -o "$1" == "gidsapplet" -o "$1" == "
 	fi
 	DEPS="$DEPS ant openjdk-8-jdk maven"
 elif [ "$1" == "mingw" -o "$1" == "mingw32" ]; then
-	# The Github's Ubuntu images since 20211122.1 are broken
-	# https://github.com/actions/virtual-environments/issues/4589
-	sudo apt install -y --allow-downgrades libpcre2-8-0=10.34-7
-
 	# Note, that this list is somehow magic and adding libwine, libwine:i386 or wine64
 	# will make the following sections break without any useful logs. See GH#2458
 	DEPS="$DEPS wine wine32 xvfb wget"
@@ -40,11 +41,27 @@ elif [ "$1" == "mingw" -o "$1" == "mingw32" ]; then
 	fi
 fi
 
+# The Github's Ubuntu images since 20211122.1 are broken
+# https://github.com/actions/virtual-environments/issues/4589
+if [ "$1" == "mingw" -o "$1" == "mingw32" -o "$1" == "ix86" ]; then
+	sudo apt install -y --allow-downgrades libpcre2-8-0=10.34-7
+fi
+
 # make sure we do not get prompts
 export DEBIAN_FRONTEND=noninteractive
 export DEBCONF_NONINTERACTIVE_SEEN=true
 sudo apt-get update
 sudo apt-get install -y build-essential $DEPS
+
+# install openssl 3.0 if needed
+if [ "$1" == "ossl3" -o "$2" == "ossl3" ]; then
+	./.github/setup-openssl.sh
+fi
+
+# install libressl if needed
+if [ "$1" == "libressl" -o "$2" == "libressl" ]; then
+	./.github/setup-libressl.sh
+fi
 
 if [ "$1" == "mingw" -o "$1" == "mingw32" ]; then
 	if [ ! -f "$(winepath 'C:/Program Files/Inno Setup 5/ISCC.exe')" ]; then

@@ -23,6 +23,7 @@
 
 #ifdef ENABLE_OPENSSL		/* empty file without openssl */
 #include <string.h>
+#include <limits.h>
 #include <openssl/bn.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
@@ -31,6 +32,10 @@
 #include <openssl/x509.h>
 #include <openssl/conf.h>
 #include <openssl/opensslconf.h> /* for OPENSSL_NO_* */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+#include <openssl/core_names.h>
+#include <openssl/param_build.h>
+#endif
 #include "libopensc/sc-ossl-compat.h"
 #ifndef OPENSSL_NO_EC
 #include <openssl/ec.h>
@@ -53,7 +58,7 @@ static void	sc_pkcs11_openssl_md_release(sc_pkcs11_operation_t *);
 static sc_pkcs11_mechanism_type_t openssl_sha1_mech = {
 	CKM_SHA_1,
 	{ 0, 0, CKF_DIGEST },
-	0,
+	{ -1 },
 	sizeof(struct sc_pkcs11_operation),
 	sc_pkcs11_openssl_md_release,
 	sc_pkcs11_openssl_md_init,
@@ -72,7 +77,7 @@ static sc_pkcs11_mechanism_type_t openssl_sha1_mech = {
 static sc_pkcs11_mechanism_type_t openssl_sha224_mech = {
 	CKM_SHA224,
 	{ 0, 0, CKF_DIGEST },
-	0,
+	{ -1 },
 	sizeof(struct sc_pkcs11_operation),
 	sc_pkcs11_openssl_md_release,
 	sc_pkcs11_openssl_md_init,
@@ -91,7 +96,7 @@ static sc_pkcs11_mechanism_type_t openssl_sha224_mech = {
 static sc_pkcs11_mechanism_type_t openssl_sha256_mech = {
 	CKM_SHA256,
 	{ 0, 0, CKF_DIGEST },
-	0,
+	{ -1 },
 	sizeof(struct sc_pkcs11_operation),
 	sc_pkcs11_openssl_md_release,
 	sc_pkcs11_openssl_md_init,
@@ -110,7 +115,7 @@ static sc_pkcs11_mechanism_type_t openssl_sha256_mech = {
 static sc_pkcs11_mechanism_type_t openssl_sha384_mech = {
 	CKM_SHA384,
 	{ 0, 0, CKF_DIGEST },
-	0,
+	{ -1 },
 	sizeof(struct sc_pkcs11_operation),
 	sc_pkcs11_openssl_md_release,
 	sc_pkcs11_openssl_md_init,
@@ -129,7 +134,7 @@ static sc_pkcs11_mechanism_type_t openssl_sha384_mech = {
 static sc_pkcs11_mechanism_type_t openssl_sha512_mech = {
 	CKM_SHA512,
 	{ 0, 0, CKF_DIGEST },
-	0,
+	{ -1 },
 	sizeof(struct sc_pkcs11_operation),
 	sc_pkcs11_openssl_md_release,
 	sc_pkcs11_openssl_md_init,
@@ -148,7 +153,7 @@ static sc_pkcs11_mechanism_type_t openssl_sha512_mech = {
 static sc_pkcs11_mechanism_type_t openssl_gostr3411_mech = {
 	CKM_GOSTR3411,
 	{ 0, 0, CKF_DIGEST },
-	0,
+	{ -1 },
 	sizeof(struct sc_pkcs11_operation),
 	sc_pkcs11_openssl_md_release,
 	sc_pkcs11_openssl_md_init,
@@ -167,7 +172,7 @@ static sc_pkcs11_mechanism_type_t openssl_gostr3411_mech = {
 static sc_pkcs11_mechanism_type_t openssl_md5_mech = {
 	CKM_MD5,
 	{ 0, 0, CKF_DIGEST },
-	0,
+	{ -1 },
 	sizeof(struct sc_pkcs11_operation),
 	sc_pkcs11_openssl_md_release,
 	sc_pkcs11_openssl_md_init,
@@ -186,7 +191,7 @@ static sc_pkcs11_mechanism_type_t openssl_md5_mech = {
 static sc_pkcs11_mechanism_type_t openssl_ripemd160_mech = {
 	CKM_RIPEMD160,
 	{ 0, 0, CKF_DIGEST },
-	0,
+	{ -1 },
 	sizeof(struct sc_pkcs11_operation),
 	sc_pkcs11_openssl_md_release,
 	sc_pkcs11_openssl_md_init,
@@ -369,13 +374,24 @@ static CK_RV gostr3410_verify_data(const unsigned char *pubkey, unsigned int pub
 	EC_POINT *P;
 	BIGNUM *X, *Y;
 	ASN1_OCTET_STRING *octet = NULL;
-	const EC_GROUP *group = NULL;
 	char paramset[2] = "A";
 	int r = -1, ret_vrf = 0;
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
+	const EC_GROUP *group = NULL;
+#else
+	EC_GROUP *group = NULL;
+	char group_name[256];
+	OSSL_PARAM *old_params = NULL, *new_params = NULL, *p = NULL;
+	OSSL_PARAM_BLD *bld = NULL;
+	unsigned char *buf = NULL;
+	size_t buf_len = 0;
+	EVP_PKEY *new_pkey = NULL;
+#endif
 
 	pkey = EVP_PKEY_new();
 	if (!pkey)
 		return CKR_HOST_MEMORY;
+
 	r = EVP_PKEY_set_type(pkey, NID_id_GostR3410_2001);
 	if (r == 1) {
 		pkey_ctx = EVP_PKEY_CTX_new(pkey, NULL);
@@ -395,8 +411,13 @@ static CK_RV gostr3410_verify_data(const unsigned char *pubkey, unsigned int pub
 			r = EVP_PKEY_paramgen_init(pkey_ctx);
 		if (r == 1)
 			r = EVP_PKEY_paramgen(pkey_ctx, &pkey);
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
 		if (r == 1 && EVP_PKEY_get0(pkey) != NULL)
 			group = EC_KEY_get0_group(EVP_PKEY_get0(pkey));
+#else
+		EVP_PKEY_get_utf8_string_param(pkey, OSSL_PKEY_PARAM_GROUP_NAME, group_name, sizeof(group_name), NULL);
+		group = EC_GROUP_new_by_curve_name(OBJ_txt2nid(group_name));
+#endif
 		r = -1;
 		if (group)
 			octet = d2i_ASN1_OCTET_STRING(NULL, &pubkey, (long)pubkey_len);
@@ -412,8 +433,44 @@ static CK_RV gostr3410_verify_data(const unsigned char *pubkey, unsigned int pub
 						P, X, Y, NULL);
 			BN_free(X);
 			BN_free(Y);
+
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
 			if (r == 1 && EVP_PKEY_get0(pkey) && P)
 				r = EC_KEY_set_public_key(EVP_PKEY_get0(pkey), P);
+#else
+			EC_GROUP_free(group);
+
+			buf_len = EC_POINT_point2oct(group, P, POINT_CONVERSION_COMPRESSED, NULL, 0, NULL);
+			if (!(buf = malloc(buf_len)))
+				r = -1;
+			if (r == 1 && P)
+				r = EC_POINT_point2oct(group, P, POINT_CONVERSION_COMPRESSED, buf, buf_len, NULL);
+
+			if (EVP_PKEY_todata(pkey, EVP_PKEY_KEYPAIR, &old_params) != 1 ||
+				!(bld = OSSL_PARAM_BLD_new()) ||
+				OSSL_PARAM_BLD_push_octet_string(bld, "pub", buf, buf_len) != 1 ||
+				!(new_params = OSSL_PARAM_BLD_to_param(bld)) ||
+				!(p = OSSL_PARAM_merge(old_params, new_params))) {
+				r = -1;
+			}
+			free(buf);
+			OSSL_PARAM_BLD_free(bld);
+
+			if (r == 1) {
+				if (EVP_PKEY_fromdata_init(pkey_ctx) != 1 ||
+					EVP_PKEY_fromdata(pkey_ctx, &new_pkey, EVP_PKEY_KEYPAIR, p) != 1) {
+					r = -1;
+				}
+			}
+			OSSL_PARAM_free(old_params);
+			OSSL_PARAM_free(new_params);
+			OSSL_PARAM_free(p);
+
+			if (r == 1) {
+				EVP_PKEY_free(pkey);
+				pkey = new_pkey;
+			}
+#endif
 			EC_POINT_free(P);
 		}
 		if (r == 1) {
@@ -446,6 +503,7 @@ CK_RV sc_pkcs11_verify_data(const unsigned char *pubkey, unsigned int pubkey_len
 	CK_RV rv = CKR_GENERAL_ERROR;
 	EVP_PKEY *pkey = NULL;
 	const unsigned char *pubkey_tmp = NULL;
+	int sLen;
 
 	if (mech->mechanism == CKM_GOSTR3410)
 	{
@@ -492,7 +550,7 @@ CK_RV sc_pkcs11_verify_data(const unsigned char *pubkey, unsigned int pubkey_len
 		sc_log(context, "Trying to verify using EVP");
 		if (md_ctx) {
 
-			if (EVP_PKEY_get0_EC_KEY(pkey)) {
+			if (EVP_PKEY_base_id(pkey) == EVP_PKEY_EC) {
 				unsigned char *signat_tmp = NULL;
 				size_t signat_len_tmp;
 				int r;
@@ -535,7 +593,6 @@ CK_RV sc_pkcs11_verify_data(const unsigned char *pubkey, unsigned int pubkey_len
 		unsigned int mdbuf_len;
 		unsigned char *mdbuf = NULL;
 		EVP_PKEY_CTX *ctx;
-		const EC_KEY *eckey;
 		int r;
 
 		sc_log(context, "Trying to verify using EVP");
@@ -566,19 +623,24 @@ CK_RV sc_pkcs11_verify_data(const unsigned char *pubkey, unsigned int pubkey_len
 					md = EVP_sha512();
 					break;
 				default:
+					EVP_PKEY_free(pkey);
 					return CKR_GENERAL_ERROR;
 			}
 			mdbuf_len = EVP_MD_size(md);
 			mdbuf = calloc(1, mdbuf_len);
-			if (mdbuf == NULL)
+			if (mdbuf == NULL) {
+				EVP_PKEY_free(pkey);
 				return CKR_DEVICE_MEMORY;
+			}
 			if ((mdctx = EVP_MD_CTX_new()) == NULL) {
 				free(mdbuf);
+				EVP_PKEY_free(pkey);
 				return CKR_GENERAL_ERROR;
 			}
 			if (!EVP_DigestInit(mdctx, md)
 				|| !EVP_DigestUpdate(mdctx, data, data_len)
 				|| !EVP_DigestFinal(mdctx, mdbuf, &mdbuf_len)) {
+				EVP_PKEY_free(pkey);
 				EVP_MD_CTX_free(mdctx);
 				free(mdbuf);
 				return CKR_GENERAL_ERROR;
@@ -591,9 +653,8 @@ CK_RV sc_pkcs11_verify_data(const unsigned char *pubkey, unsigned int pubkey_len
 		res = 0;
 		r = sc_asn1_sig_value_rs_to_sequence(NULL, signat, signat_len,
 						     &signat_tmp, &signat_len_tmp);
-		eckey = EVP_PKEY_get0_EC_KEY(pkey);
 		ctx = EVP_PKEY_CTX_new(pkey, NULL);
-		if (r == 0 && eckey && ctx && 1 == EVP_PKEY_verify_init(ctx))
+		if (r == 0 && EVP_PKEY_base_id(pkey) == EVP_PKEY_EC && ctx && EVP_PKEY_verify_init(ctx) == 1)
 			res = EVP_PKEY_verify(ctx, signat_tmp, signat_len_tmp, data, data_len);
 
 		EVP_PKEY_CTX_free(ctx);
@@ -609,9 +670,13 @@ CK_RV sc_pkcs11_verify_data(const unsigned char *pubkey, unsigned int pubkey_len
 			return CKR_GENERAL_ERROR;
 
 	} else {
-		RSA *rsa;
 		unsigned char *rsa_out = NULL, pad;
-		int rsa_outlen = 0;
+		size_t rsa_outlen = 0;
+		EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(pkey, NULL);
+		if (!ctx) {
+			EVP_PKEY_free(pkey);
+			return CKR_DEVICE_MEMORY;
+		}
 
 		sc_log(context, "Trying to verify using low-level API");
 		switch (mech->mechanism) {
@@ -633,28 +698,32 @@ CK_RV sc_pkcs11_verify_data(const unsigned char *pubkey, unsigned int pubkey_len
 			break;
 		default:
 			EVP_PKEY_free(pkey);
+			EVP_PKEY_CTX_free(ctx);
 			return CKR_ARGUMENTS_BAD;
 		}
 
-		rsa = EVP_PKEY_get1_RSA(pkey);
-		EVP_PKEY_free(pkey);
-		if (rsa == NULL)
-			return CKR_DEVICE_MEMORY;
-
-		rsa_out = calloc(1, RSA_size(rsa));
-		if (rsa_out == NULL) {
-			RSA_free(rsa);
-			return CKR_DEVICE_MEMORY;
-		}
-
-		rsa_outlen = RSA_public_decrypt(signat_len, signat, rsa_out, rsa, pad);
-		if (rsa_outlen <= 0) {
-			RSA_free(rsa);
-			free(rsa_out);
-			sc_log(context, "RSA_public_decrypt() returned %d\n", rsa_outlen);
+		if ( EVP_PKEY_verify_recover_init(ctx) != 1 ||
+			EVP_PKEY_CTX_set_rsa_padding(ctx, pad) != 1) {
+			EVP_PKEY_CTX_free(ctx);
+			EVP_PKEY_free(pkey);
 			return CKR_GENERAL_ERROR;
 		}
 
+		rsa_outlen = EVP_PKEY_size(pkey);
+		rsa_out = calloc(1, rsa_outlen);
+		if (rsa_out == NULL) {
+			EVP_PKEY_free(pkey);
+			EVP_PKEY_CTX_free(ctx);
+			return CKR_DEVICE_MEMORY;
+		}
+		if (EVP_PKEY_verify_recover(ctx, rsa_out, &rsa_outlen, signat, signat_len) != 1) {
+			free(rsa_out);
+			EVP_PKEY_free(pkey);
+			EVP_PKEY_CTX_free(ctx);
+			sc_log(context, "RSA_public_decrypt() returned %d\n", (int) rsa_outlen);
+			return CKR_GENERAL_ERROR;
+		}
+		EVP_PKEY_CTX_free(ctx);
 		/* For PSS mechanisms we can not simply compare the "decrypted"
 		 * data -- we need to verify the PSS padding is valid
 		 */
@@ -669,8 +738,8 @@ CK_RV sc_pkcs11_verify_data(const unsigned char *pubkey, unsigned int pubkey_len
 			unsigned char digest[EVP_MAX_MD_SIZE];
 
 			if (mech->pParameter == NULL) {
-				RSA_free(rsa);
 				free(rsa_out);
+				EVP_PKEY_free(pkey);
 				sc_log(context, "PSS mechanism requires parameter");
 				return CKR_MECHANISM_PARAM_INVALID;
 			}
@@ -693,8 +762,8 @@ CK_RV sc_pkcs11_verify_data(const unsigned char *pubkey, unsigned int pubkey_len
 				mgf_md = EVP_sha512();
 				break;
 			default:
-				RSA_free(rsa);
 				free(rsa_out);
+				EVP_PKEY_free(pkey);
 				return CKR_MECHANISM_PARAM_INVALID;
 			}
 
@@ -715,8 +784,8 @@ CK_RV sc_pkcs11_verify_data(const unsigned char *pubkey, unsigned int pubkey_len
 				pss_md = EVP_sha512();
 				break;
 			default:
-				RSA_free(rsa);
 				free(rsa_out);
+				EVP_PKEY_free(pkey);
 				return CKR_MECHANISM_PARAM_INVALID;
 			}
 
@@ -730,30 +799,52 @@ CK_RV sc_pkcs11_verify_data(const unsigned char *pubkey, unsigned int pubkey_len
 				unsigned int tmp_len;
 
 				if (!md_ctx || !EVP_DigestFinal(md_ctx, tmp, &tmp_len)) {
-					RSA_free(rsa);
 					free(rsa_out);
+					EVP_PKEY_free(pkey);
 					return CKR_GENERAL_ERROR;
 				}
 				data = tmp;
 				data_len = tmp_len;
 			}
 			rv = CKR_SIGNATURE_INVALID;
-			if (data_len == (unsigned int) EVP_MD_size(pss_md)
-					&& RSA_verify_PKCS1_PSS_mgf1(rsa, data, pss_md, mgf_md,
-						rsa_out, EVP_MD_size(pss_md)/*sLen*/) == 1)
+
+			/* special mode - autodetect sLen from signature */
+			/* https://github.com/openssl/openssl/blob/master/crypto/rsa/rsa_pss.c */
+			/* there is no way to pass negative value here, we using maximal value for this */
+			if (((CK_ULONG) 1 ) << (sizeof(CK_ULONG) * CHAR_BIT -1) == param->sLen)
+				sLen = -2;
+			else
+				sLen = param->sLen;
+
+			if ((ctx = EVP_PKEY_CTX_new(pkey, NULL)) == NULL ||
+				EVP_PKEY_verify_init(ctx) != 1 ||
+				EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PSS_PADDING) != 1 ||
+				EVP_PKEY_CTX_set_signature_md(ctx, pss_md) != 1 ||
+				EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx, sLen) != 1 ||
+				EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, mgf_md) != 1) {
+				sc_log(context, "Failed to initialize EVP_PKEY_CTX");
+				free(rsa_out);
+				EVP_PKEY_free(pkey);
+				EVP_PKEY_CTX_free(ctx);
+				return rv;
+			}
+
+			if (data_len == (unsigned int) EVP_MD_size(pss_md) &&
+					EVP_PKEY_verify(ctx, signat, signat_len, data, data_len) == 1)
 				rv = CKR_OK;
-			RSA_free(rsa);
+			EVP_PKEY_free(pkey);
+			EVP_PKEY_CTX_free(ctx);
 			free(rsa_out);
 			sc_log(context, "Returning %lu", rv);
 			return rv;
+		} else {
+			EVP_PKEY_free(pkey);
 		}
-		RSA_free(rsa);
 
 		if ((unsigned int) rsa_outlen == data_len && memcmp(rsa_out, data, data_len) == 0)
 			rv = CKR_OK;
 		else
 			rv = CKR_SIGNATURE_INVALID;
-
 		free(rsa_out);
 	}
 

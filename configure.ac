@@ -19,9 +19,9 @@ define([VS_FF_PRODUCT_NAME], [OpenSC smartcard framework])
 define([VS_FF_PRODUCT_UPDATES], [https://github.com/OpenSC/OpenSC/releases])
 define([VS_FF_PRODUCT_URL], [https://github.com/OpenSC/OpenSC])
 
-m4_sinclude(version.m4.ci)
+m4_sinclude(m4/version.m4.ci)
 
-m4_define([openssl_minimum_version], [1.0.1])
+m4_define([openssl_minimum_version], [1.1.1])
 
 AC_INIT([PRODUCT_NAME],[PACKAGE_VERSION_MAJOR.PACKAGE_VERSION_MINOR.PACKAGE_VERSION_FIX[]PACKAGE_SUFFIX],[PRODUCT_BUGREPORT],[PRODUCT_TARNAME],[PRODUCT_URL])
 AC_CONFIG_AUX_DIR([.])
@@ -128,6 +128,19 @@ esac
 case "${host}" in
 	*-mingw*)
 		CPPFLAGS="${CPPFLAGS} -D__USE_MINGW_ANSI_STDIO=1"
+	;;
+esac
+
+dnl with Firefox's osclientcerts.so we skip registering our PKCS#11 module on Windows and macOS by default
+case "${host}" in
+	*-*-darwin*)
+		PKCS11_REGISTER_SKIP_FIREFOX="on"
+	;;
+	*-mingw*|*-winnt*|*-cygwin*)
+		PKCS11_REGISTER_SKIP_FIREFOX="on"
+	;;
+	*)
+		PKCS11_REGISTER_SKIP_FIREFOX="off"
 	;;
 esac
 

@@ -280,7 +280,7 @@ static int format_senv(struct sc_pkcs15_card *p15card,
 int sc_pkcs15_decipher(struct sc_pkcs15_card *p15card,
 		const struct sc_pkcs15_object *obj,
 		unsigned long flags,
-		const u8 * in, size_t inlen, u8 *out, size_t outlen)
+		const u8 * in, size_t inlen, u8 *out, size_t outlen, void *pMechanism)
 {
 	sc_context_t *ctx = p15card->card->ctx;
 	int r;
@@ -312,7 +312,26 @@ int sc_pkcs15_decipher(struct sc_pkcs15_card *p15card,
 		r = sc_pkcs1_strip_02_padding(ctx, out, s, out, &s);
 		LOG_TEST_RET(ctx, r, "Invalid PKCS#1 padding");
 	}
-
+#ifdef ENABLE_OPENSSL
+	if (pad_flags & SC_ALGORITHM_RSA_PAD_OAEP)
+	{
+		size_t s = r;
+		uint8_t *param = NULL;
+		size_t paramlen = 0;
+		if (pMechanism != NULL) {
+			CK_MECHANISM *mech = (CK_MECHANISM *)pMechanism;
+			if (mech->pParameter && sizeof(CK_RSA_PKCS_OAEP_PARAMS) == mech->ulParameterLen) {
+				CK_RSA_PKCS_OAEP_PARAMS * oaep_params = mech->pParameter;
+				if (oaep_params->source == CKZ_DATA_SPECIFIED) {
+					param = oaep_params->pSourceData;
+					paramlen = (size_t)oaep_params->ulSourceDataLen;
+				}
+			}
+		}
+		r = sc_pkcs1_strip_oaep_padding(ctx, out, s, flags, param, paramlen);
+		LOG_TEST_RET(ctx, r, "Invalid OAEP padding");
+	}
+#endif
 	LOG_FUNC_RETURN(ctx, r);
 }
 
@@ -574,7 +593,7 @@ int sc_pkcs15_wrap(struct sc_pkcs15_card *p15card,
 int sc_pkcs15_compute_signature(struct sc_pkcs15_card *p15card,
 				const struct sc_pkcs15_object *obj,
 				unsigned long flags, const u8 *in, size_t inlen,
-				u8 *out, size_t outlen)
+				u8 *out, size_t outlen, void *pMechanism)
 {
 	sc_context_t *ctx = p15card->card->ctx;
 	int r;
@@ -645,14 +664,14 @@ int sc_pkcs15_compute_signature(struct sc_pkcs15_card *p15card,
 			(prkey->usage & USAGE_ANY_DECIPHER)) ) {
 			size_t tmplen = buflen;
 			if (flags & SC_ALGORITHM_RSA_RAW) {
-				r = sc_pkcs15_decipher(p15card, obj, flags, in, inlen, out, outlen);
+				r = sc_pkcs15_decipher(p15card, obj, flags, in, inlen, out, outlen, NULL);
 				goto err;
 			}
 			if (modlen > tmplen)
 				LOG_TEST_GOTO_ERR(ctx, SC_ERROR_NOT_ALLOWED, "Buffer too small, needs recompile!");
 
 			/* XXX Assuming RSA key here */
-			r = sc_pkcs1_encode(ctx, flags, in, inlen, buf, &tmplen, prkey->modulus_length);
+			r = sc_pkcs1_encode(ctx, flags, in, inlen, buf, &tmplen, prkey->modulus_length, pMechanism);
 
 			/* no padding needed - already done */
 			flags &= ~SC_ALGORITHM_RSA_PADS;
@@ -661,7 +680,7 @@ int sc_pkcs15_compute_signature(struct sc_pkcs15_card *p15card,
 
 			LOG_TEST_GOTO_ERR(ctx, r, "Unable to add padding");
 
-			r = sc_pkcs15_decipher(p15card, obj, flags, buf, modlen, out, outlen);
+			r = sc_pkcs15_decipher(p15card, obj, flags, buf, modlen, out, outlen, NULL);
 			goto err;
 		}
 
@@ -718,7 +737,7 @@ int sc_pkcs15_compute_signature(struct sc_pkcs15_card *p15card,
 
 		/* XXX Assuming RSA key here */
 		r = sc_pkcs1_encode(ctx, pad_flags, tmp, inlen, tmp, &tmplen,
-		    prkey->modulus_length);
+		    prkey->modulus_length, pMechanism);
 		LOG_TEST_GOTO_ERR(ctx, r, "Unable to add padding");
 		inlen = tmplen;
 	}

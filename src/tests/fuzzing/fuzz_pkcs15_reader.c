@@ -223,7 +223,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size)
                 SC_ALGORITHM_RSA_PAD_ISO9796};
             for (i = 0; i < sizeof decipher_flags/sizeof *decipher_flags; i++) {
                 sc_pkcs15_decipher(p15card, obj, decipher_flags[i],
-                        in, in_len, buf, sizeof buf);
+                        in, in_len, buf, sizeof buf, NULL);
             }
 
             i = sizeof buf;
@@ -277,7 +277,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size)
             };
             for (i = 0; i < sizeof signature_flags/sizeof *signature_flags; i++) {
                 sc_pkcs15_compute_signature(p15card, obj, signature_flags[i],
-                        in, in_len, buf, sizeof buf);
+                        in, in_len, buf, sizeof buf, NULL);
             }
 
             if (obj->type == SC_PKCS15_TYPE_AUTH_PIN) {

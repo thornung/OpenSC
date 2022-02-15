@@ -268,7 +268,8 @@ enum {
 	SC_CARD_TYPE_EDO = 38000,
 
 	/* JCOP4 cards with NQ-Applet */
-	SC_CARD_TYPE_NQ_APPLET = 39000
+	SC_CARD_TYPE_NQ_APPLET = 39000,
+	SC_CARD_TYPE_NQ_APPLET_RFID = 39001
 };
 
 extern sc_card_driver_t *sc_get_default_driver(void);

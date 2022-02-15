@@ -44,6 +44,7 @@ static const struct sc_atr_table starcos_atrs[] = {
 	{ "3B:DF:96:FF:81:31:FE:45:80:5B:44:45:2E:42:4E:4F:54:4B:31:30:30:81:05:A0", NULL, NULL, SC_CARD_TYPE_STARCOS_V3_5, 0, NULL },
 	{ "3B:D9:96:FF:81:31:FE:45:80:31:B8:73:86:01:E0:81:05:22", NULL, NULL, SC_CARD_TYPE_STARCOS_V3_5, 0, NULL },
 	{ "3B:D0:97:FF:81:B1:FE:45:1F:07:2B", NULL, NULL, SC_CARD_TYPE_STARCOS_V3_4, 0, NULL },
+	{ "3B:D0:96:FF:81:B1:FE:45:1F:07:2A", NULL, NULL, SC_CARD_TYPE_STARCOS_V3_4, 0, NULL },
 	{ "3b:df:96:ff:81:31:fe:45:80:5b:44:45:2e:42:41:5f:53:43:33:35:32:81:05:b5", NULL, NULL, SC_CARD_TYPE_STARCOS_V3_5, 0, NULL },
 	{ NULL, NULL, NULL, 0, 0, NULL }
 };
@@ -1888,7 +1889,7 @@ static int starcos_compute_signature(sc_card_t *card,
 					flags = SC_ALGORITHM_RSA_HASH_NONE;
 				}
 				tmp_len = sizeof(sbuf);
-				r = sc_pkcs1_encode(card->ctx, flags, data, datalen, sbuf, &tmp_len, sizeof(sbuf)*8);
+				r = sc_pkcs1_encode(card->ctx, flags, data, datalen, sbuf, &tmp_len, sizeof(sbuf)*8, NULL);
 				LOG_TEST_RET(card->ctx, r, "sc_pkcs1_encode failed");
 			} else {
 				memcpy(sbuf, data, datalen);
@@ -1951,7 +1952,7 @@ static int starcos_compute_signature(sc_card_t *card,
 				flags = SC_ALGORITHM_RSA_HASH_NONE;
 			tmp_len = sizeof(sbuf);
 			r = sc_pkcs1_encode(card->ctx, flags, data, datalen,
-					sbuf, &tmp_len, sizeof(sbuf)*8);
+					sbuf, &tmp_len, sizeof(sbuf)*8, NULL);
 			if (r < 0)
 				return r;
 		} else {

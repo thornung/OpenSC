@@ -30,6 +30,9 @@
 #include "common/compat_strnlen.h"
 #ifdef ENABLE_OPENSSL
 #include <openssl/sha.h>
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+#include <openssl/evp.h>
+#endif
 #else
 #define SHA_DIGEST_LENGTH	20
 #endif
@@ -4242,7 +4245,6 @@ pkcs15_prkey_sign(struct sc_pkcs11_session *session, void *obj,
 		/* The MGF parameter was already verified in SignInit() */
 		flags |= mgf2flags(((CK_RSA_PKCS_PSS_PARAMS*)pMechanism->pParameter)->mgf);
 
-		/* Assuming salt is the size of hash */
 		break;
 	case CKM_GOSTR3410:
 		flags = SC_ALGORITHM_GOSTR3410_HASH_NONE;
@@ -4287,7 +4289,7 @@ pkcs15_prkey_sign(struct sc_pkcs11_session *session, void *obj,
 	       "Selected flags %X. Now computing signature for %lu bytes. %lu bytes reserved.",
 	       flags, ulDataLen, *pulDataLen);
 	rc = sc_pkcs15_compute_signature(fw_data->p15_card, prkey->prv_p15obj, flags,
-			pData, ulDataLen, pSignature, *pulDataLen);
+			pData, ulDataLen, pSignature, *pulDataLen, pMechanism);
 	if (rc < 0 && !sc_pkcs11_conf.lock_login && !prkey_has_path) {
 		/* If private key PKCS#15 object do not have 'path' attribute,
 		 * and if PKCS#11 login session is not locked,
@@ -4297,7 +4299,7 @@ pkcs15_prkey_sign(struct sc_pkcs11_session *session, void *obj,
 		 */
 		if (reselect_app_df(fw_data->p15_card) == SC_SUCCESS)
 			rc = sc_pkcs15_compute_signature(fw_data->p15_card, prkey->prv_p15obj, flags,
-					pData, ulDataLen, pSignature, *pulDataLen);
+					pData, ulDataLen, pSignature, *pulDataLen, pMechanism);
 	}
 
 	sc_unlock(p11card->card);
@@ -4460,12 +4462,12 @@ pkcs15_prkey_decrypt(struct sc_pkcs11_session *session, void *obj,
 		return sc_to_cryptoki_error(rv, "C_Decrypt");
 
 	rv = sc_pkcs15_decipher(fw_data->p15_card, prkey->prv_p15obj, flags,
-			pEncryptedData, ulEncryptedDataLen, decrypted, sizeof(decrypted));
+			pEncryptedData, ulEncryptedDataLen, decrypted, sizeof(decrypted), pMechanism);
 
 	if (rv < 0 && !sc_pkcs11_conf.lock_login && !prkey_has_path)
 		if (reselect_app_df(fw_data->p15_card) == SC_SUCCESS)
 			rv = sc_pkcs15_decipher(fw_data->p15_card, prkey->prv_p15obj, flags,
-					pEncryptedData, ulEncryptedDataLen, decrypted, sizeof(decrypted));
+					pEncryptedData, ulEncryptedDataLen, decrypted, sizeof(decrypted), pMechanism);
 
 	sc_unlock(p11card->card);
 
@@ -4628,8 +4630,6 @@ pkcs15_prkey_init_params(struct sc_pkcs11_session *session,
 {
 	const CK_RSA_PKCS_PSS_PARAMS *pss_params;
 	unsigned int expected_hash = 0, i;
-	unsigned int expected_salt_len = 0;
-	const unsigned int salt_lens[5] = { 160, 256, 384, 512, 224 };
 	const unsigned int hashes[5] = { CKM_SHA_1, CKM_SHA256,
 		CKM_SHA384, CKM_SHA512, CKM_SHA224 };
 	const CK_RSA_PKCS_OAEP_PARAMS *oaep_params;
@@ -4655,24 +4655,18 @@ pkcs15_prkey_init_params(struct sc_pkcs11_session *session,
 		 */
 		if (pMechanism->mechanism == CKM_SHA1_RSA_PKCS_PSS) {
 			expected_hash = CKM_SHA_1;
-			expected_salt_len = 160;
 		} else if (pMechanism->mechanism == CKM_SHA224_RSA_PKCS_PSS) {
 			expected_hash = CKM_SHA224;
-			expected_salt_len = 224;
 		} else if (pMechanism->mechanism == CKM_SHA256_RSA_PKCS_PSS) {
 			expected_hash = CKM_SHA256;
-			expected_salt_len = 256;
 		} else if (pMechanism->mechanism == CKM_SHA384_RSA_PKCS_PSS) {
 			expected_hash = CKM_SHA384;
-			expected_salt_len = 384;
 		} else if (pMechanism->mechanism == CKM_SHA512_RSA_PKCS_PSS) {
 			expected_hash = CKM_SHA512;
-			expected_salt_len = 512;
 		} else if (pMechanism->mechanism == CKM_RSA_PKCS_PSS) {
 			for (i = 0; i < 5; ++i) {
 				if (hashes[i] == pss_params->hashAlg) {
 					expected_hash = hashes[i];
-					expected_salt_len = salt_lens[i];
 				}
 			}
 		}
@@ -4680,13 +4674,6 @@ pkcs15_prkey_init_params(struct sc_pkcs11_session *session,
 		if (expected_hash != pss_params->hashAlg)
 			return CKR_MECHANISM_PARAM_INVALID;
 
-		/* We're strict, and only do PSS signatures with a salt length that
-		 * matches the digest length (any shorter is rubbish, any longer
-		 * is useless). */
-		if (pss_params->sLen != expected_salt_len / 8)
-			return CKR_MECHANISM_PARAM_INVALID;
-
-		/* TODO support different salt lengths */
 		break;
 	case CKM_RSA_PKCS_OAEP:
 		if (!pMechanism->pParameter ||
@@ -4705,7 +4692,6 @@ pkcs15_prkey_init_params(struct sc_pkcs11_session *session,
 		default:
 			return CKR_MECHANISM_PARAM_INVALID;
 		}
-		/* TODO support different salt lengths */
 		/* TODO is there something more to check */
 		break;
 	}
@@ -5357,7 +5343,11 @@ pkcs15_skey_get_attribute(struct sc_pkcs11_session *session,
 		break;
 	case CKA_VALUE_LEN:
 		check_attribute_buffer(attr, sizeof(CK_ULONG));
-		*(CK_ULONG*)attr->pValue = skey->info->data.len;
+		if (skey->info->data.len) { /* Available only if the CKA_VALUE is present -- probably never */
+			*(CK_ULONG*)attr->pValue = skey->info->data.len;
+		} else { /* From standard secret key SKDF keyLen attribute (in bits) */
+			*(CK_ULONG*)attr->pValue = skey->info->value_len/8;
+		}
 		break;
 	case CKA_VALUE:
 		check_attribute_buffer(attr, skey->info->data.len);
@@ -6247,7 +6237,7 @@ register_mechanisms(struct sc_pkcs11_card *p11card)
 		rsa_flags |= SC_ALGORITHM_RSA_PAD_PKCS1;
 #ifdef ENABLE_OPENSSL
 		rsa_flags |= SC_ALGORITHM_RSA_PAD_PSS;
-		/* TODO support OAEP decryption & encryption using OpenSSL */
+		rsa_flags |= SC_ALGORITHM_RSA_PAD_OAEP;
 #endif
 	}
 

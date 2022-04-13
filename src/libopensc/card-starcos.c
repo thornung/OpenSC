@@ -112,6 +112,9 @@ unsigned short disabled_fids[] = {
 		} \
 	} while (0);
 
+#define LOBYTE(w)      (w & 0x00FF)
+#define HIBYTE(w)      (w & 0xFF00)
+
 /* the starcos part */
 static int starcos_match_card(sc_card_t *card)
 {
